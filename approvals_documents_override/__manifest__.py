@@ -7,6 +7,7 @@
     "depends": ["approvals", "documents"],
     "data": [
         "views/approvals_category_views.xml",
+        "views/approval_request_views.xml",
     ],
     "installable": True,
     "application": False,
