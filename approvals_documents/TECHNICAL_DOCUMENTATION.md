@@ -8,7 +8,7 @@ This module integrates Approvals with Documents hierarchy and follows native **F
 
 ## Category (`approval.category`)
 ### Added fields
-- `type_degree` (`none|optional|required`): selection policy controlling custom document fields on request forms.
+- `type_degree` (`required|optional|none`, default: `none`): selection policy controlling custom document fields on request forms.
 - `document_type_allowed_ids` (computed `Many2many`): type candidates loaded from direct children of Documents roots named `کنترل مستندات`.
 
 ### Helpers

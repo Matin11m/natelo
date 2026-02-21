@@ -10,15 +10,15 @@ class ApprovalCategory(models.Model):
     _CONTROL_ROOT_NAME = "کنترل مستندات"
     _PARENT_CANDIDATE_FIELDS = ("parent_folder_id", "parent_id", "folder_id")
     _DISPLAY_SELECTION = [
-        ("none", "None"),
-        ("optional", "Optional"),
         ("required", "Required"),
+        ("optional", "Optional"),
+        ("none", "None"),
     ]
 
     type_degree = fields.Selection(
         _DISPLAY_SELECTION,
         string="Type Degree",
-        default="optional",
+        default="none",
         required=True,
     )
 
