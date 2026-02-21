@@ -5,21 +5,9 @@
         <field name="model">approval.category</field>
         <field name="inherit_id" ref="approvals.approval_category_view_form"/>
         <field name="arch" type="xml">
-            <xpath expr="//group" position="inside">
-                <field name="document_type_visibility"/>
-                <field
-                    name="document_type_folder_id"
-                    invisible="document_type_visibility == 'none'"
-                    required="document_type_visibility == 'required'"
-                    options="{'no_open': True, 'no_create': True, 'no_create_edit': True, 'no_quick_create': True}"
-                />
-                <field name="document_owner_visibility"/>
-                <field
-                    name="document_owner_folder_id"
-                    invisible="document_owner_visibility == 'none' or not document_type_folder_id"
-                    required="document_owner_visibility == 'required'"
-                    options="{'no_open': True, 'no_create': True, 'no_create_edit': True, 'no_quick_create': True}"
-                />
+            <xpath expr="//group[@name='option_settings']" position="inside">
+                <field name="document_type_visibility" widget="radio" options="{'horizontal': true}"/>
+                <field name="document_owner_visibility" widget="radio" options="{'horizontal': true}"/>
             </xpath>
         </field>
     </record>
