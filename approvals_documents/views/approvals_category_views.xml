@@ -6,8 +6,7 @@
         <field name="inherit_id" ref="approvals.approval_category_view_form"/>
         <field name="arch" type="xml">
             <xpath expr="//group[@name='option_settings']" position="inside">
-                <field name="document_type_visibility" widget="radio" options="{'horizontal': true}"/>
-                <field name="document_owner_visibility" widget="radio" options="{'horizontal': true}"/>
+                <field name="document_fields_visibility" string="Document Fields" widget="radio" options="{'horizontal': true}"/>
             </xpath>
         </field>
     </record>
