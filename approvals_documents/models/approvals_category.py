@@ -15,9 +15,9 @@ class ApprovalCategory(models.Model):
         ("required", "Required"),
     ]
 
-    document_fields_visibility = fields.Selection(
+    type_degree = fields.Selection(
         _DISPLAY_SELECTION,
-        string="Document Fields",
+        string="Type Degree",
         default="optional",
         required=True,
     )
@@ -55,7 +55,7 @@ class ApprovalCategory(models.Model):
         parent_field = self._documents_parent_field()
         return self._documents_folder_model().search([(parent_field, "in", parents.ids)])
 
-    @api.depends("document_fields_visibility")
+    @api.depends("type_degree")
     def _compute_document_type_allowed_ids(self):
         """Compute type candidates from children of control roots when enabled."""
         folder_model = self._documents_folder_model()
@@ -63,5 +63,5 @@ class ApprovalCategory(models.Model):
 
         for rec in self:
             rec.document_type_allowed_ids = (
-                allowed_types if rec.document_fields_visibility != "none" else folder_model.browse()
+                allowed_types if rec.type_degree != "none" else folder_model.browse()
             )

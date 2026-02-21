@@ -8,14 +8,14 @@
             <xpath expr="//field[@name='category_id']" position="after">
                 <field
                     name="document_type_folder_id"
-                    invisible="category_document_fields_visibility == 'none'"
-                    required="category_document_fields_visibility == 'required'"
+                    invisible="category_type_degree == 'none'"
+                    required="category_type_degree == 'required'"
                     options="{'no_open': True, 'no_create': True, 'no_create_edit': True, 'no_quick_create': True}"
                 />
                 <field
                     name="document_owner_folder_id"
-                    invisible="category_document_fields_visibility == 'none' or not document_type_folder_id"
-                    required="category_document_fields_visibility == 'required'"
+                    invisible="category_type_degree == 'none' or not document_type_folder_id"
+                    required="category_type_degree == 'required'"
                     options="{'no_open': True, 'no_create': True, 'no_create_edit': True, 'no_quick_create': True}"
                 />
             </xpath>

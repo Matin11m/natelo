@@ -8,7 +8,7 @@ This module integrates Approvals with Documents hierarchy and follows native **F
 
 ## Category (`approval.category`)
 ### Added fields
-- `document_fields_visibility` (`none|optional|required`): single policy controlling document fields on request forms.
+- `type_degree` (`none|optional|required`): selection policy controlling custom document fields on request forms.
 - `document_type_allowed_ids` (computed `Many2many`): type candidates loaded from direct children of Documents roots named `کنترل مستندات`.
 
 ### Helpers
@@ -19,7 +19,7 @@ This module integrates Approvals with Documents hierarchy and follows native **F
 
 ## Request (`approval.request`)
 ### Added fields
-- `category_document_fields_visibility`: related policy from category.
+- `category_type_degree`: related policy from category.
 - `document_type_folder_id`: user-selectable type, domain limited to `document_type_allowed_ids`.
 - `document_owner_folder_id`: user-selectable owner, domain limited to `document_owner_allowed_ids`.
 - `document_type_allowed_ids` / `document_owner_allowed_ids`: computed candidate sets.
@@ -31,7 +31,7 @@ This module integrates Approvals with Documents hierarchy and follows native **F
 - Owner list depends on selected type.
 
 ## Views
-- `approvals_category_views.xml`: injects one radio field (`document_fields_visibility`) in native `option_settings`.
+- `approvals_category_views.xml`: injects one radio field (`type_degree`) in native `option_settings`.
 - `approval_request_views.xml`: controls show/hide/required of both fields based on the single category policy.
 
 ## Validation
