@@ -6,6 +6,7 @@
     "license": "LGPL-3",
     "depends": ["approvals", "documents"],
     "data": [
+        "data_sequence.xml",
         "views/approvals_category_views.xml",
         "views/approval_request_views.xml",
     ],

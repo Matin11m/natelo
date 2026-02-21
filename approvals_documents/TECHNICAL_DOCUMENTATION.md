@@ -19,6 +19,7 @@ This module integrates Approvals with Documents hierarchy and follows native **F
 
 ## Request (`approval.request`)
 ### Added fields
+- `request_number`: unique request number generated from sequence `approvals_documents.request_number`.
 - `category_type_degree`: related policy from category.
 - `document_type_folder_id`: user-selectable type, domain limited to `document_type_allowed_ids`.
 - `document_owner_folder_id`: user-selectable owner, domain limited to `document_owner_allowed_ids`.
@@ -33,6 +34,9 @@ This module integrates Approvals with Documents hierarchy and follows native **F
 ## Views
 - `approvals_category_views.xml`: injects one radio field (`type_degree`) in native `option_settings`.
 - `approval_request_views.xml`: controls show/hide/required of both fields based on the single category policy.
+
+## Sequence
+- XML data file `data_sequence.xml` defines `ir.sequence` with code `approvals_documents.request_number`.
 
 ## Validation
 - `python -m compileall approvals_documents`

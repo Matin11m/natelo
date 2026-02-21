@@ -9,6 +9,22 @@ class ApprovalRequest(models.Model):
     _DOCUMENT_MODEL = "documents.document"
     _PARENT_CANDIDATE_FIELDS = ("parent_folder_id", "parent_id", "folder_id")
 
+    _sql_constraints = [
+        (
+            "approval_request_number_unique",
+            "unique(request_number)",
+            "Request Number must be unique.",
+        )
+    ]
+
+    request_number = fields.Char(
+        string="شماره درخواست",
+        copy=False,
+        readonly=True,
+        default="New",
+        index=True,
+    )
+
     category_type_degree = fields.Selection(
         related="category_id.type_degree",
         readonly=True,
@@ -33,6 +49,16 @@ class ApprovalRequest(models.Model):
         _DOCUMENT_MODEL,
         compute="_compute_document_allowed_ids",
     )
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        """Assign a unique request number at create time using ir.sequence."""
+        for vals in vals_list:
+            if not vals.get("request_number") or vals.get("request_number") == "New":
+                vals["request_number"] = self.env["ir.sequence"].next_by_code(
+                    "approvals_documents.request_number"
+                ) or "New"
+        return super().create(vals_list)
 
     @api.model
     def _documents_parent_field(self):

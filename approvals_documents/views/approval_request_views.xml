@@ -6,6 +6,7 @@
         <field name="inherit_id" ref="approvals.approval_request_view_form"/>
         <field name="arch" type="xml">
             <xpath expr="//field[@name='category_id']" position="after">
+                <field name="request_number" readonly="1"/>
                 <field
                     name="document_type_folder_id"
                     invisible="category_type_degree == 'none'"
