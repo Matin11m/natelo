@@ -47,8 +47,17 @@ class ApprovalRequest(models.Model):
 
     @api.onchange("category_id")
     def _onchange_category_id_document_defaults(self):
-        self.document_type_folder_id = self.category_id.document_type_folder_id
-        self.document_owner_folder_id = self.category_id.document_owner_folder_id
+        """When category changes, let user pick values from that category's allowed list."""
+        self.document_type_folder_id = False
+        self.document_owner_folder_id = False
+
+        allowed_type_ids = self.category_id.document_type_allowed_ids.ids
+        return {
+            "domain": {
+                "document_type_folder_id": [("id", "in", allowed_type_ids)],
+                "document_owner_folder_id": [("id", "=", False)],
+            }
+        }
 
     @api.onchange("document_type_folder_id")
     def _onchange_document_type_folder_id(self):
