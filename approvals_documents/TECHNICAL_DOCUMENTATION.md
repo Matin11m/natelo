@@ -11,7 +11,7 @@ The module applies this behavior in two places:
 1. `approval.category` (configuration level)
 2. `approval.request` (user request level)
 
-The configuration source is Documents nodes named `کنترول مستندات` and their direct children.
+The configuration source is Documents nodes named `کنترل مستندات` and their direct children.
 
 ---
 
@@ -56,7 +56,7 @@ The configuration source is Documents nodes named `کنترول مستندات` 
 - `_DOCUMENT_MODEL`
   - Target model used for documents hierarchy (`documents.document`).
 - `_CONTROL_ROOT_NAME`
-  - Root name searched in Documents (`کنترول مستندات`).
+  - Root name searched in Documents (`کنترل مستندات`).
 - `_PARENT_CANDIDATE_FIELDS`
   - Parent relation candidates for cross-version compatibility:
     - `parent_folder_id`
@@ -158,7 +158,7 @@ The configuration source is Documents nodes named `کنترول مستندات` 
 ## 6) Functional Flow
 
 1. Admin configures category fields in `approval.category`.
-2. Type list is constrained to direct children of `کنترول مستندات` roots.
+2. Type list is constrained to direct children of `کنترل مستندات` roots.
 3. Owner list is constrained to direct children of selected type.
 4. User creates `approval.request`.
 5. After selecting category, type dropdown is scoped to category-allowed values.
@@ -175,7 +175,7 @@ The configuration source is Documents nodes named `کنترول مستندات` 
 
 ## 8) Operational Notes / Limitations
 
-- Root name matching is exact (`کنترول مستندات`).
+- Root name matching is exact (`کنترل مستندات`).
 - If no matching roots exist, type dropdown will be empty.
 - Current behavior uses **direct children** for both levels (not recursive).
 
@@ -202,7 +202,7 @@ Common future changes:
 ## 10) Quick Validation Checklist
 
 1. Upgrade module.
-2. Ensure at least one Documents node named `کنترول مستندات` exists.
+2. Ensure at least one Documents node named `کنترل مستندات` exists.
 3. Create children under it (type) and children under type (owner).
 4. Open approval category form:
    - Type shows only allowed children.

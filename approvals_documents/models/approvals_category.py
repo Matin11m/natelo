@@ -7,7 +7,7 @@ class ApprovalCategory(models.Model):
     _inherit = "approval.category"
 
     _DOCUMENT_MODEL = "documents.document"
-    _CONTROL_ROOT_NAME = "کنترول مستندات"
+    _CONTROL_ROOT_NAME = "کنترل مستندات"
     _PARENT_CANDIDATE_FIELDS = ("parent_folder_id", "parent_id", "folder_id")
 
     document_type_folder_id = fields.Many2one(
