@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from odoo import api, fields, models
 
 
@@ -8,6 +10,7 @@ class ApprovalRequest(models.Model):
 
     _DOCUMENT_MODEL = "documents.document"
     _PARENT_CANDIDATE_FIELDS = ("parent_folder_id", "parent_id", "folder_id")
+    _REQUEST_SEQUENCE_CODE = "approvals_documents.request_number"
 
     _sql_constraints = [
         (
@@ -52,12 +55,12 @@ class ApprovalRequest(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
-        """Assign a unique request number at create time using ir.sequence."""
+        """Assign a robust unique request number for every newly created request."""
         for vals in vals_list:
             if not vals.get("request_number") or vals.get("request_number") == "New":
                 vals["request_number"] = self.env["ir.sequence"].next_by_code(
-                    "approvals_documents.request_number"
-                ) or "New"
+                    self._REQUEST_SEQUENCE_CODE
+                ) or f"APRQ/FALLBACK/{uuid4().hex[:12].upper()}"
         return super().create(vals_list)
 
     @api.model
