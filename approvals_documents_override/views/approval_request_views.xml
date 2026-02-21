@@ -9,12 +9,11 @@
                 <field
                     name="document_type_folder_id"
                     options="{'no_open': True, 'no_create': True, 'no_create_edit': True, 'no_quick_create': True}"
-                    readonly="1"
                 />
                 <field
                     name="document_owner_folder_id"
+                    invisible="not document_type_folder_id"
                     options="{'no_open': True, 'no_create': True, 'no_create_edit': True, 'no_quick_create': True}"
-                    readonly="1"
                 />
             </xpath>
         </field>
