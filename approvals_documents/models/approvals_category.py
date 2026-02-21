@@ -9,6 +9,24 @@ class ApprovalCategory(models.Model):
     _DOCUMENT_MODEL = "documents.document"
     _CONTROL_ROOT_NAME = "کنترل مستندات"
     _PARENT_CANDIDATE_FIELDS = ("parent_folder_id", "parent_id", "folder_id")
+    _DISPLAY_SELECTION = [
+        ("none", "None"),
+        ("optional", "Optional"),
+        ("required", "Required"),
+    ]
+
+    document_type_visibility = fields.Selection(
+        _DISPLAY_SELECTION,
+        string="نوع مدرک",
+        default="optional",
+        required=True,
+    )
+    document_owner_visibility = fields.Selection(
+        _DISPLAY_SELECTION,
+        string="صاحب مدرک",
+        default="optional",
+        required=True,
+    )
 
     document_type_folder_id = fields.Many2one(
         _DOCUMENT_MODEL,
@@ -60,18 +78,20 @@ class ApprovalCategory(models.Model):
         parent_field = self._documents_parent_field()
         return self._documents_folder_model().search([(parent_field, "in", parents.ids)])
 
-    @api.depends("document_type_folder_id")
+    @api.depends("document_type_folder_id", "document_type_visibility", "document_owner_visibility")
     def _compute_document_folder_domains(self):
-        """Compute allowed type and owner options based on control-root hierarchy."""
+        """Compute allowed type and owner options based on visibility and hierarchy."""
         folder_model = self._documents_folder_model()
         control_roots = self._get_document_control_roots()
         allowed_type_nodes = self._children_of(control_roots)
 
         for rec in self:
-            rec.document_type_allowed_ids = allowed_type_nodes
+            rec.document_type_allowed_ids = (
+                allowed_type_nodes if rec.document_type_visibility != "none" else folder_model.browse()
+            )
             rec.document_owner_allowed_ids = (
                 self._children_of(rec.document_type_folder_id)
-                if rec.document_type_folder_id
+                if rec.document_owner_visibility != "none" and rec.document_type_folder_id
                 else folder_model.browse()
             )
 
@@ -79,8 +99,17 @@ class ApprovalCategory(models.Model):
     def _onchange_document_type_folder_id(self):
         """Reset/filter owner options whenever document type changes."""
         self.document_owner_folder_id = False
-        if not self.document_type_folder_id:
+        if self.document_owner_visibility == "none" or not self.document_type_folder_id:
             return {"domain": {"document_owner_folder_id": [("id", "=", False)]}}
 
         owner_ids = self._children_of(self.document_type_folder_id).ids
         return {"domain": {"document_owner_folder_id": [("id", "in", owner_ids)]}}
+
+    @api.onchange("document_type_visibility", "document_owner_visibility")
+    def _onchange_document_visibility(self):
+        """Clear values when visibility is disabled at category level."""
+        if self.document_type_visibility == "none":
+            self.document_type_folder_id = False
+            self.document_owner_folder_id = False
+        elif self.document_owner_visibility == "none":
+            self.document_owner_folder_id = False

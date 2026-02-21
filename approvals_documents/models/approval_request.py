@@ -9,6 +9,15 @@ class ApprovalRequest(models.Model):
     _DOCUMENT_MODEL = "documents.document"
     _PARENT_CANDIDATE_FIELDS = ("parent_folder_id", "parent_id", "folder_id")
 
+    category_document_type_visibility = fields.Selection(
+        related="category_id.document_type_visibility",
+        readonly=True,
+    )
+    category_document_owner_visibility = fields.Selection(
+        related="category_id.document_owner_visibility",
+        readonly=True,
+    )
+
     document_type_folder_id = fields.Many2one(
         _DOCUMENT_MODEL,
         string="نوع مدرک",
@@ -38,25 +47,42 @@ class ApprovalRequest(models.Model):
                 return field_name
         return "parent_id"
 
-    @api.depends("category_id", "document_type_folder_id")
+    @api.depends(
+        "category_id",
+        "document_type_folder_id",
+        "category_document_type_visibility",
+        "category_document_owner_visibility",
+    )
     def _compute_document_allowed_ids(self):
-        """Compute request-level allowed options based on chosen category and type."""
+        """Compute request-level allowed options based on category setup and type."""
         folder_model = self.env[self._DOCUMENT_MODEL]
         parent_field = self._documents_parent_field()
 
         for rec in self:
-            rec.document_type_allowed_ids = rec.category_id.document_type_allowed_ids
+            rec.document_type_allowed_ids = (
+                rec.category_id.document_type_allowed_ids
+                if rec.category_document_type_visibility != "none"
+                else folder_model.browse()
+            )
             rec.document_owner_allowed_ids = (
                 folder_model.search([(parent_field, "=", rec.document_type_folder_id.id)])
-                if rec.document_type_folder_id
+                if rec.category_document_owner_visibility != "none" and rec.document_type_folder_id
                 else folder_model.browse()
             )
 
     @api.onchange("category_id")
     def _onchange_category_id_document_defaults(self):
-        """Reset selections and scope type choices to category-allowed data."""
+        """Reset selections and scope domains to category-allowed data."""
         self.document_type_folder_id = False
         self.document_owner_folder_id = False
+
+        if self.category_document_type_visibility == "none":
+            return {
+                "domain": {
+                    "document_type_folder_id": [("id", "=", False)],
+                    "document_owner_folder_id": [("id", "=", False)],
+                }
+            }
 
         allowed_type_ids = self.category_id.document_type_allowed_ids.ids
         return {
@@ -70,7 +96,7 @@ class ApprovalRequest(models.Model):
     def _onchange_document_type_folder_id(self):
         """Reset and filter owner list whenever type changes."""
         self.document_owner_folder_id = False
-        if not self.document_type_folder_id:
+        if self.category_document_owner_visibility == "none" or not self.document_type_folder_id:
             return {"domain": {"document_owner_folder_id": [("id", "=", False)]}}
 
         parent_field = self._documents_parent_field()
