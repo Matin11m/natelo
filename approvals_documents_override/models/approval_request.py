@@ -2,52 +2,59 @@ from odoo import api, fields, models
 
 
 class ApprovalRequest(models.Model):
+    """Allow request users to select type/owner from category-scoped Documents data."""
+
     _inherit = "approval.request"
 
+    _DOCUMENT_MODEL = "documents.document"
+    _PARENT_CANDIDATE_FIELDS = ("parent_folder_id", "parent_id", "folder_id")
+
     document_type_folder_id = fields.Many2one(
-        "documents.document",
+        _DOCUMENT_MODEL,
         string="نوع مدرک",
         domain="[('id', 'in', document_type_allowed_ids)]",
     )
     document_owner_folder_id = fields.Many2one(
-        "documents.document",
+        _DOCUMENT_MODEL,
         string="صاحب مدرک",
         domain="[('id', 'in', document_owner_allowed_ids)]",
     )
 
     document_type_allowed_ids = fields.Many2many(
-        "documents.document",
+        _DOCUMENT_MODEL,
         compute="_compute_document_allowed_ids",
     )
     document_owner_allowed_ids = fields.Many2many(
-        "documents.document",
+        _DOCUMENT_MODEL,
         compute="_compute_document_allowed_ids",
     )
 
     @api.model
     def _documents_parent_field(self):
-        folder_model = self.env["documents.document"]
-        for field_name in ("parent_folder_id", "parent_id", "folder_id"):
+        """Resolve parent field name for Documents hierarchy across versions."""
+        folder_model = self.env[self._DOCUMENT_MODEL]
+        for field_name in self._PARENT_CANDIDATE_FIELDS:
             if field_name in folder_model._fields:
                 return field_name
         return "parent_id"
 
     @api.depends("category_id", "document_type_folder_id")
     def _compute_document_allowed_ids(self):
-        folder_obj = self.env["documents.document"]
+        """Compute request-level allowed options based on chosen category and type."""
+        folder_model = self.env[self._DOCUMENT_MODEL]
         parent_field = self._documents_parent_field()
+
         for rec in self:
             rec.document_type_allowed_ids = rec.category_id.document_type_allowed_ids
-            if rec.document_type_folder_id:
-                rec.document_owner_allowed_ids = folder_obj.search(
-                    [(parent_field, "=", rec.document_type_folder_id.id)]
-                )
-            else:
-                rec.document_owner_allowed_ids = folder_obj.browse()
+            rec.document_owner_allowed_ids = (
+                folder_model.search([(parent_field, "=", rec.document_type_folder_id.id)])
+                if rec.document_type_folder_id
+                else folder_model.browse()
+            )
 
     @api.onchange("category_id")
     def _onchange_category_id_document_defaults(self):
-        """When category changes, let user pick values from that category's allowed list."""
+        """Reset selections and scope type choices to category-allowed data."""
         self.document_type_folder_id = False
         self.document_owner_folder_id = False
 
@@ -61,6 +68,7 @@ class ApprovalRequest(models.Model):
 
     @api.onchange("document_type_folder_id")
     def _onchange_document_type_folder_id(self):
+        """Reset and filter owner list whenever type changes."""
         self.document_owner_folder_id = False
         if not self.document_type_folder_id:
             return {"domain": {"document_owner_folder_id": [("id", "=", False)]}}
@@ -68,8 +76,6 @@ class ApprovalRequest(models.Model):
         parent_field = self._documents_parent_field()
         return {
             "domain": {
-                "document_owner_folder_id": [
-                    (parent_field, "=", self.document_type_folder_id.id)
-                ],
+                "document_owner_folder_id": [(parent_field, "=", self.document_type_folder_id.id)],
             }
         }
