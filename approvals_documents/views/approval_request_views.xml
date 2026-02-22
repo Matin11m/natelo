@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="approval_request_view_form_inherit_documents" model="ir.ui.view">
+        <field name="name">approval.request.view.form.inherit.documents</field>
+        <field name="model">approval.request</field>
+        <field name="inherit_id" ref="approvals.approval_request_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='category_id']" position="after">
+                <field name="request_number" readonly="1"/>
+                <field
+                    name="document_type_folder_id"
+                    invisible="category_type_degree == 'none'"
+                    required="category_type_degree == 'required'"
+                    options="{'no_open': True, 'no_create': True, 'no_create_edit': True, 'no_quick_create': True}"
+                />
+                <field
+                    name="document_owner_folder_id"
+                    invisible="category_type_degree == 'none' or not document_type_folder_id"
+                    required="category_type_degree == 'required'"
+                    options="{'no_open': True, 'no_create': True, 'no_create_edit': True, 'no_quick_create': True}"
+                />
+            </xpath>
+        </field>
+    </record>
+</odoo>
