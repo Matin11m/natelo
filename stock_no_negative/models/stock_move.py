@@ -11,34 +11,53 @@ class StockMove(models.Model):
     _inherit = "stock.move"
 
     def _action_done(self, cancel_backorder=False):
-        self._sync_effective_dates_and_locations_from_picking()
+        effective_by_picking = self._get_effective_date_by_picking()
+        self._sync_locations_from_picking()
         res = super()._action_done(cancel_backorder=cancel_backorder)
+        self._apply_effective_dates_after_done(effective_by_picking)
         self._check_negative_stock_history()
         return res
 
-    def _sync_effective_dates_and_locations_from_picking(self):
-        """Sync done date and locations from picking effective date when available."""
+    def _get_effective_date_by_picking(self):
+        """Return {picking: effective_date} for pickings that define one."""
+        effective_by_picking = {}
+        for picking in self.filtered("picking_id").mapped("picking_id"):
+            effective_date = picking.effective_date_time
+            if not effective_date and "x_studio_effective_date_time" in picking._fields:
+                # Backward-compatible fallback for existing Studio deployments.
+                effective_date = picking.x_studio_effective_date_time
+            if effective_date:
+                effective_by_picking[picking] = effective_date
+        return effective_by_picking
+
+    def _sync_locations_from_picking(self):
+        """Align move/move-line locations with their picking before validation."""
         moves_with_picking = self.filtered("picking_id")
         if not moves_with_picking:
             return
 
         for picking in moves_with_picking.mapped("picking_id"):
-            effective_date = picking.effective_date_time
-            if not effective_date and "x_studio_effective_date_time" in picking._fields:
-                # Backward-compatible fallback for existing Studio deployments.
-                effective_date = picking.x_studio_effective_date_time
-            if not effective_date:
-                continue
-
             picking_moves = moves_with_picking.filtered(lambda m: m.picking_id == picking)
             vals = {
-                "date": effective_date,
                 "location_id": picking.location_id.id,
                 "location_dest_id": picking.location_dest_id.id,
             }
-            picking.write({"date_done": effective_date})
             picking_moves.write(vals)
             picking_moves.mapped("move_line_ids").write(vals)
+
+    def _apply_effective_dates_after_done(self, effective_by_picking):
+        """Re-apply effective date after done to prevent Odoo overrides."""
+        if not effective_by_picking:
+            return
+
+        done_moves = self.filtered(lambda m: m.state == "done" and m.picking_id)
+        for picking, effective_date in effective_by_picking.items():
+            picking_done_moves = done_moves.filtered(lambda m: m.picking_id == picking)
+            if not picking_done_moves:
+                continue
+            picking.write({"date_done": effective_date})
+            picking_done_moves.write({"date": effective_date})
+            picking_done_moves.mapped("move_line_ids").write({"date": effective_date})
 
     def _check_negative_stock_history(self):
         """Historical negative stock check across done moves.

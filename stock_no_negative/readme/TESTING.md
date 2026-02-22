@@ -118,6 +118,7 @@
    - `picking.date_done`
    - `stock.move.date`
    - `stock.move.line.date`
+4. پس از Validate، زمان `date_done` نباید به زمان `scheduled_date` (یا +1 دقیقه) برگردد.
 
 نتیجه مورد انتظار:
 - هر سه مقدار برابر تاریخ موثر باشند.
