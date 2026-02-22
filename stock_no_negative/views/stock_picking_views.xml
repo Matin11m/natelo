@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_picking_form_inherit_effective_date" model="ir.ui.view">
+        <field name="name">stock.picking.form.effective.date.stock.no.negative</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="stock.view_picking_form" />
+        <field name="arch" type="xml">
+            <field name="scheduled_date" position="after">
+                <field name="effective_date_time" />
+            </field>
+        </field>
+    </record>
+</odoo>

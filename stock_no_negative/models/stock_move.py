@@ -17,21 +17,18 @@ class StockMove(models.Model):
         return res
 
     def _sync_effective_dates_and_locations_from_picking(self):
-        """Sync done date and locations from picking effective date when available.
-
-        This mirrors the previous server action behavior while avoiding repeated writes.
-        """
+        """Sync done date and locations from picking effective date when available."""
         moves_with_picking = self.filtered("picking_id")
         if not moves_with_picking:
             return
 
         for picking in moves_with_picking.mapped("picking_id"):
-            # Keep this integration optional: only run if custom studio field exists.
-            if "x_studio_effective_date_time" not in picking._fields:
-                continue
-            effective_date = picking.x_studio_effective_date_time
+            effective_date = picking.effective_date_time
+            if not effective_date and "x_studio_effective_date_time" in picking._fields:
+                # Backward-compatible fallback for existing Studio deployments.
+                effective_date = picking.x_studio_effective_date_time
             if not effective_date:
-                raise UserError(self.env._("تاریخ برگه نمی‌تواند خالی باشد."))
+                continue
 
             picking_moves = moves_with_picking.filtered(lambda m: m.picking_id == picking)
             vals = {
