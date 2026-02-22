@@ -36,7 +36,7 @@ This module integrates Approvals with Documents hierarchy and follows native **F
 - `approval_request_views.xml`: controls show/hide/required of both fields based on the single category policy.
 
 ## Sequence
-- XML data file `data_sequence.xml` defines `ir.sequence` with code `approvals_documents.request_number`.
+- XML data file `views/data_sequence.xml` defines `ir.sequence` with code `approvals_documents.request_number`.
 - Sequence data is loaded with `noupdate="1"` to avoid accidental counter reset during module upgrades.
 - If sequence service is unavailable, a UUID-based fallback (`APRQ/FALLBACK/...`) is used to keep uniqueness guarantees.
 

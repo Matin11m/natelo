@@ -4,7 +4,7 @@
     <record id="seq_approval_request_number" model="ir.sequence">
         <field name="name">Approval Request Number</field>
         <field name="code">approvals_documents.request_number</field>
-        <field name="prefix">APRQ/%(year)s/</field>
+        <field name="prefix">%(year)s/</field>
         <field name="padding">5</field>
         <field name="number_next">1</field>
         <field name="number_increment">1</field>
