@@ -30,7 +30,8 @@ class StockMove(models.Model):
 
     def _prepare_moves_from_picking(self, moves):
         for picking in moves.filtered("picking_id").mapped("picking_id"):
-            if not picking.date_done:
+            effective_date = self._effective_date_from_picking(picking)
+            if not effective_date:
                 raise UserError(self.env._("تاریخ برگه نمی‌تواند خالی باشد."))
 
             picking_moves = moves.filtered(lambda m: m.picking_id == picking)
@@ -38,10 +39,10 @@ class StockMove(models.Model):
                 "location_id": picking.location_id.id,
                 "location_dest_id": picking.location_dest_id.id,
             }
-            picking_moves.write(vals)
+            picking_moves.write({**vals, "date": effective_date})
             picking_moves.mapped("move_line_ids").write(
                 {
-                    "date": picking.date_done,
+                    "date": effective_date,
                     **vals,
                 }
             )
@@ -50,42 +51,55 @@ class StockMove(models.Model):
                 picking.name,
                 len(picking_moves),
                 len(picking_moves.mapped("move_line_ids")),
-                picking.date_done,
+                effective_date,
             )
 
     def _apply_picking_dates_after_done(self, moves):
         done_moves = moves.filtered(lambda m: m.state == "done" and m.picking_id)
         for picking in done_moves.mapped("picking_id"):
             picking_moves = done_moves.filtered(lambda m: m.picking_id == picking)
-            if not picking.date_done:
+            effective_date = self._effective_date_from_picking(picking)
+            if not effective_date:
                 continue
-            picking_moves.write({"date": picking.date_done})
-            picking_moves.mapped("move_line_ids").write({"date": picking.date_done})
+            picking_moves.write({"date": effective_date})
+            picking_moves.mapped("move_line_ids").write({"date": effective_date})
             _logger.info(
                 "[MOVE_POST] picking=%s done_moves=%s done_move_lines=%s date_done=%s",
                 picking.name,
                 len(picking_moves),
                 len(picking_moves.mapped("move_line_ids")),
-                picking.date_done,
+                effective_date,
             )
 
-    def _effective_datetime_for_replay(self, move, current_moves):
-        """Pick a deterministic datetime for historical replay ordering.
+    def _effective_date_from_picking(self, picking):
+        if not picking:
+            return False
+        if getattr(picking, "effective_date_time", False):
+            return picking.effective_date_time
+        if "x_studio_effective_date_time" in picking._fields and picking.x_studio_effective_date_time:
+            return picking.x_studio_effective_date_time
+        return picking.date_done
 
-        For current candidate moves we must use picking.date_done (if set), because
-        Odoo may still carry "now" in `move.date` before `_action_done` finalizes.
-        """
-        if move in current_moves and move.picking_id and move.picking_id.date_done:
-            return move.picking_id.date_done
-        if move.picking_id and move.picking_id.date_done:
-            return move.picking_id.date_done
+    def _effective_datetime_for_replay(self, move, current_moves):
+        """Deterministic datetime used for ordering and strict validation."""
+        if move.picking_id:
+            picking_effective = self._effective_date_from_picking(move.picking_id)
+            if picking_effective:
+                return picking_effective
+        if move in current_moves and move.picking_id:
+            # Current move with missing effective date must not silently fallback to now.
+            raise UserError(
+                self.env._(
+                    "تاریخ مؤثر برای برگه '%(picking)s' تنظیم نشده است.",
+                    picking=move.picking_id.display_name,
+                )
+            )
         return move.date or move.create_date
 
     def _sort_key(self, move, location_id, current_moves):
         move_dt = self._effective_datetime_for_replay(move, current_moves)
-        move_date = move_dt.date()
         priority = 1 if move.location_dest_id.id == location_id else 2
-        return (move_date, priority, move.id)
+        return (move_dt, priority, move.id)
 
     def _check_negative_stock_history(self, moves):
         move_model = self.env["stock.move"]
