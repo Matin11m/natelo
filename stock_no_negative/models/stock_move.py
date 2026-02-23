@@ -24,14 +24,16 @@ class StockMove(models.Model):
         return res
 
     def _get_effective_date_by_picking(self, candidate_moves):
-        """Return {picking: effective_date} and enforce non-empty effective date."""
+        """Return {picking: effective_date} for pickings that define one."""
         effective_by_picking = {}
         for picking in candidate_moves.filtered("picking_id").mapped("picking_id"):
             effective_date = picking.effective_date_time
             if not effective_date and "x_studio_effective_date_time" in picking._fields:
                 effective_date = picking.x_studio_effective_date_time
             if not effective_date:
-                raise UserError(self.env._("تاریخ برگه نمی‌تواند خالی باشد."))
+                # Do not block validation when no effective date is provided.
+                # In this case Odoo standard date behavior remains in place.
+                continue
             effective_by_picking[picking] = effective_date
         return effective_by_picking
 
@@ -65,7 +67,7 @@ class StockMove(models.Model):
             picking_done_moves.mapped("move_line_ids").write({"date": effective_date})
 
     def _historical_sort_key(self, move, location_id, effective_by_picking):
-        move_date = effective_by_picking.get(move.picking_id, move.date)
+        move_date = effective_by_picking.get(move.picking_id, move.date or move.create_date)
         date_part = move_date.date()
         priority = 1 if move.location_dest_id.id == location_id else 2
         return (date_part, priority, move.id)
@@ -138,7 +140,7 @@ class StockMove(models.Model):
 
                     if balances[location_id] < self._NEGATIVE_HISTORY_BALANCE_FLOOR:
                         location = self.env["stock.location"].browse(location_id)
-                        move_date = effective_by_picking.get(move.picking_id, move.date)
+                        move_date = effective_by_picking.get(move.picking_id, move.date or move.create_date)
                         raise UserError(
                             self.env._(
                                 "موجودی منفی شناسایی شد:\n\n"
