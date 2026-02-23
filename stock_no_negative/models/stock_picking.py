@@ -12,3 +12,13 @@ class StockPicking(models.Model):
         help="When set, this date is used as done date for the picking and as the date "
         "for related stock moves and move lines at validation time.",
     )
+
+    def _action_done(self):
+        """Keep user-defined done date after Odoo finalization."""
+        saved_dates = {picking.id: picking.date_done for picking in self}
+        res = super()._action_done()
+        for picking in self:
+            saved_date = saved_dates.get(picking.id)
+            if saved_date:
+                picking.date_done = saved_date
+        return res
