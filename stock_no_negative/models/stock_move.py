@@ -69,8 +69,21 @@ class StockMove(models.Model):
                 picking.date_done,
             )
 
-    def _sort_key(self, move, location_id):
-        move_date = (move.date or move.create_date).date()
+    def _effective_datetime_for_replay(self, move, current_moves):
+        """Pick a deterministic datetime for historical replay ordering.
+
+        For current candidate moves we must use picking.date_done (if set), because
+        Odoo may still carry "now" in `move.date` before `_action_done` finalizes.
+        """
+        if move in current_moves and move.picking_id and move.picking_id.date_done:
+            return move.picking_id.date_done
+        if move.picking_id and move.picking_id.date_done:
+            return move.picking_id.date_done
+        return move.date or move.create_date
+
+    def _sort_key(self, move, location_id, current_moves):
+        move_dt = self._effective_datetime_for_replay(move, current_moves)
+        move_date = move_dt.date()
         priority = 1 if move.location_dest_id.id == location_id else 2
         return (move_date, priority, move.id)
 
@@ -114,7 +127,7 @@ class StockMove(models.Model):
                     done_moves = move_model.search(domain)
                     current_product_moves = current_moves.filtered(lambda m: m.product_id == product)
                     unique_moves = done_moves | current_product_moves
-                    sorted_moves = unique_moves.sorted(key=lambda m: self._sort_key(m, location_id))
+                    sorted_moves = unique_moves.sorted(key=lambda m: self._sort_key(m, location_id, current_product_moves))
 
                     _logger.info(
                         "[NEG_CHECK][SCOPE] picking=%s product=%s location_id=%s done=%s current=%s total=%s",
@@ -124,6 +137,16 @@ class StockMove(models.Model):
                         len(done_moves),
                         len(current_product_moves),
                         len(sorted_moves),
+                    )
+                    _logger.info(
+                        "[NEG_CHECK][DATES] picking=%s product=%s location_id=%s current_dates=%s",
+                        picking.name,
+                        product.display_name,
+                        location_id,
+                        [
+                            self._effective_datetime_for_replay(m, current_product_moves)
+                            for m in current_product_moves
+                        ],
                     )
 
                     balance = 0.0
@@ -150,7 +173,7 @@ class StockMove(models.Model):
                             picking.name,
                             move.reference or "-",
                             move.id,
-                            move.date,
+                            self._effective_datetime_for_replay(move, current_product_moves),
                             direction,
                             qty_in_product_uom,
                             balance,
@@ -163,7 +186,7 @@ class StockMove(models.Model):
                                 picking.name,
                                 product.display_name,
                                 location.complete_name,
-                                (move.date or move.create_date).date(),
+                                self._effective_datetime_for_replay(move, current_product_moves).date(),
                                 qty_in_product_uom,
                                 balance,
                             )
@@ -177,7 +200,7 @@ class StockMove(models.Model):
                                     "• موجودی جدید: %(balance)s",
                                     product=product.display_name,
                                     location=location.complete_name,
-                                    date=(move.date or move.create_date).date(),
+                                    date=self._effective_datetime_for_replay(move, current_product_moves).date(),
                                     qty=qty_in_product_uom,
                                     balance=balance,
                                 )
