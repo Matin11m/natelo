@@ -1,162 +1,229 @@
 # Copyright 2026
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
-from collections import defaultdict
+import logging
 
 from odoo import models
 from odoo.exceptions import UserError
+
+_logger = logging.getLogger(__name__)
 
 
 class StockMove(models.Model):
     _inherit = "stock.move"
 
+    _EXCLUDED_LOCATION_IDS = {14, 15, 96}
+    _USAGE_EXCLUSIONS = {"supplier", "view", "customer", "production"}
+    _BALANCE_FLOOR = -0.0000001
+
     def _action_done(self, cancel_backorder=False):
-        effective_by_picking = self._get_effective_date_by_picking()
-        self._sync_locations_from_picking()
-        self._check_negative_stock_history_on_done_candidates(effective_by_picking)
+        candidate_moves = self.filtered(lambda m: m.state != "done" and m.product_id.is_storable)
+        if candidate_moves:
+            self._prepare_moves_from_picking(candidate_moves)
+            self._check_negative_stock_history(candidate_moves)
+
         res = super()._action_done(cancel_backorder=cancel_backorder)
-        self._apply_effective_dates_after_done(effective_by_picking)
+
+        if candidate_moves:
+            self._apply_picking_dates_after_done(candidate_moves)
         return res
 
-    def _get_effective_date_by_picking(self):
-        """Return {picking: effective_date} for pickings that define one."""
-        effective_by_picking = {}
-        for picking in self.filtered("picking_id").mapped("picking_id"):
-            effective_date = picking.effective_date_time
-            if not effective_date and "x_studio_effective_date_time" in picking._fields:
-                # Backward-compatible fallback for existing Studio deployments.
-                effective_date = picking.x_studio_effective_date_time
-            if effective_date:
-                effective_by_picking[picking] = effective_date
-        return effective_by_picking
+    def _prepare_moves_from_picking(self, moves):
+        for picking in moves.filtered("picking_id").mapped("picking_id"):
+            effective_date = self._effective_date_from_picking(picking)
+            if not effective_date:
+                raise UserError(self.env._("تاریخ برگه نمی‌تواند خالی باشد."))
 
-    def _sync_locations_from_picking(self):
-        """Align move/move-line locations with their picking before validation."""
-        moves_with_picking = self.filtered("picking_id")
-        if not moves_with_picking:
-            return
-
-        for picking in moves_with_picking.mapped("picking_id"):
-            picking_moves = moves_with_picking.filtered(lambda m: m.picking_id == picking)
+            picking_moves = moves.filtered(lambda m: m.picking_id == picking)
             vals = {
                 "location_id": picking.location_id.id,
                 "location_dest_id": picking.location_dest_id.id,
             }
-            picking_moves.write(vals)
-            picking_moves.mapped("move_line_ids").write(vals)
+            picking_moves.write({**vals, "date": effective_date})
+            picking_moves.mapped("move_line_ids").write(
+                {
+                    "date": effective_date,
+                    **vals,
+                }
+            )
+            _logger.info(
+                "[MOVE_PREP] picking=%s moves=%s move_lines=%s date_done=%s",
+                picking.name,
+                len(picking_moves),
+                len(picking_moves.mapped("move_line_ids")),
+                effective_date,
+            )
 
-    def _apply_effective_dates_after_done(self, effective_by_picking):
-        """Re-apply effective date fields after done to prevent Odoo overrides."""
-        if not effective_by_picking:
-            return
-
-        done_moves = self.filtered(lambda m: m.state == "done" and m.picking_id)
-        for picking, effective_date in effective_by_picking.items():
-            picking_done_moves = done_moves.filtered(lambda m: m.picking_id == picking)
-            if not picking_done_moves:
+    def _apply_picking_dates_after_done(self, moves):
+        done_moves = moves.filtered(lambda m: m.state == "done" and m.picking_id)
+        for picking in done_moves.mapped("picking_id"):
+            picking_moves = done_moves.filtered(lambda m: m.picking_id == picking)
+            effective_date = self._effective_date_from_picking(picking)
+            if not effective_date:
                 continue
-            picking.write({"date_done": effective_date, "effective_date_time": effective_date})
-            picking_done_moves.write({"date": effective_date})
-            picking_done_moves.mapped("move_line_ids").write({"date": effective_date})
+            picking_moves.write({"date": effective_date})
+            picking_moves.mapped("move_line_ids").write({"date": effective_date})
+            _logger.info(
+                "[MOVE_POST] picking=%s done_moves=%s done_move_lines=%s date_done=%s",
+                picking.name,
+                len(picking_moves),
+                len(picking_moves.mapped("move_line_ids")),
+                effective_date,
+            )
 
-    def _check_negative_stock_history_on_done_candidates(self, effective_by_picking=None):
-        """Historical negative stock check including moves being completed now.
+    def _effective_date_from_picking(self, picking):
+        if not picking:
+            return False
+        if getattr(picking, "effective_date_time", False):
+            return picking.effective_date_time
+        if "x_studio_effective_date_time" in picking._fields and picking.x_studio_effective_date_time:
+            return picking.x_studio_effective_date_time
+        return picking.date_done
 
-        This complements quant-level checks by validating chronological balance
-        evolution per (product, location) and catches back-dated inconsistencies.
-        """
-        candidate_moves = self.filtered(lambda m: m.state != "done" and m.product_id.is_storable)
-        if not candidate_moves:
-            return
-        effective_by_picking = effective_by_picking or {}
+    def _effective_datetime_for_replay(self, move, current_moves):
+        """Deterministic datetime used for ordering and strict validation."""
+        if move.picking_id:
+            picking_effective = self._effective_date_from_picking(move.picking_id)
+            if picking_effective:
+                return picking_effective
+        if move in current_moves and move.picking_id:
+            # Current move with missing effective date must not silently fallback to now.
+            raise UserError(
+                self.env._(
+                    "تاریخ مؤثر برای برگه '%(picking)s' تنظیم نشده است.",
+                    picking=move.picking_id.display_name,
+                )
+            )
+        return move.date or move.create_date
 
-        excluded_usage = {"supplier", "view", "customer", "production"}
-        balance_floor = -0.0000001
+    def _sort_key(self, move, location_id, current_moves):
+        move_dt = self._effective_datetime_for_replay(move, current_moves)
+        priority = 1 if move.location_dest_id.id == location_id else 2
+        return (move_dt, priority, move.id)
 
-        # Build scope once: products and locations touched by current moves.
-        product_ids = set(candidate_moves.mapped("product_id").ids)
-        relevant_location_ids = {
-            loc.id
-            for loc in (candidate_moves.mapped("location_id") | candidate_moves.mapped("location_dest_id"))
-            if loc.usage not in excluded_usage and not loc.allow_negative_stock
-        }
-        if not product_ids or not relevant_location_ids:
-            return
-
-        product_model = self.env["product.product"]
+    def _check_negative_stock_history(self, moves):
         move_model = self.env["stock.move"]
 
-        for product in product_model.browse(product_ids):
-            if product.allow_negative_stock or product.categ_id.allow_negative_stock:
-                continue
+        for picking in moves.filtered("picking_id").mapped("picking_id"):
+            current_moves = moves.filtered(lambda m: m.picking_id == picking)
+            products = current_moves.mapped("product_id")
 
-            # Single ordered query per product (instead of per product/location pair).
-            product_moves = move_model.search(
-                [
-                    ("state", "=", "done"),
-                    ("product_id", "=", product.id),
-                    "|",
-                    ("location_id", "in", list(relevant_location_ids)),
-                    ("location_dest_id", "in", list(relevant_location_ids)),
-                ],
-                order="date asc, id asc",
+            locations = set()
+            for move in current_moves:
+                for location in (move.location_id, move.location_dest_id):
+                    if (
+                        location.usage not in self._USAGE_EXCLUSIONS
+                        and location.id not in self._EXCLUDED_LOCATION_IDS
+                        and not location.allow_negative_stock
+                    ):
+                        locations.add(location.id)
+
+            _logger.info(
+                "[NEG_CHECK][START] picking=%s products=%s locations=%s",
+                picking.name,
+                [p.display_name for p in products],
+                sorted(locations),
             )
 
-            # Include current candidate moves in replay with their intended date.
-            current_product_moves = candidate_moves.filtered(lambda m: m.product_id == product)
-            replay_moves = list(product_moves)
-            replay_moves.extend(current_product_moves)
-            replay_moves.sort(
-                key=lambda m: (
-                    effective_by_picking.get(m.picking_id, m.date),
-                    m.id,
-                )
-            )
+            for product in products:
+                if product.allow_negative_stock or product.categ_id.allow_negative_stock:
+                    _logger.info("[NEG_CHECK][SKIP] product=%s allow_negative enabled", product.display_name)
+                    continue
 
-            balances = defaultdict(float)
-            for move in replay_moves:
-                src = move.location_id
-                dst = move.location_dest_id
-                qty = move.product_uom._compute_quantity(
-                    move.quantity,
-                    move.product_id.uom_id,
-                    rounding_method="HALF-UP",
-                )
+                for location_id in locations:
+                    domain = [
+                        ("state", "=", "done"),
+                        ("product_id", "=", product.id),
+                        "|",
+                        ("location_id", "=", location_id),
+                        ("location_dest_id", "=", location_id),
+                    ]
+                    done_moves = move_model.search(domain)
+                    current_product_moves = current_moves.filtered(lambda m: m.product_id == product)
+                    unique_moves = done_moves | current_product_moves
+                    sorted_moves = unique_moves.sorted(key=lambda m: self._sort_key(m, location_id, current_product_moves))
 
-                if src.id in relevant_location_ids and src.usage not in excluded_usage:
-                    balances[src.id] -= qty
-                    if balances[src.id] < balance_floor:
-                        raise UserError(
-                            self.env._(
-                                "موجودی منفی شناسایی شد:\n\n"
-                                "• کالا: %(product)s\n"
-                                "• انبار: %(location)s\n"
-                                "• تاریخ: %(date)s\n"
-                                "• مقدار حرکت: %(qty)s\n"
-                                "• موجودی جدید: %(balance)s",
-                                product=move.product_id.display_name,
-                                location=src.complete_name,
-                                date=effective_by_picking.get(move.picking_id, move.date).date(),
-                                qty=qty,
-                                balance=balances[src.id],
-                            )
+                    _logger.info(
+                        "[NEG_CHECK][SCOPE] picking=%s product=%s location_id=%s done=%s current=%s total=%s",
+                        picking.name,
+                        product.display_name,
+                        location_id,
+                        len(done_moves),
+                        len(current_product_moves),
+                        len(sorted_moves),
+                    )
+                    _logger.info(
+                        "[NEG_CHECK][DATES] picking=%s product=%s location_id=%s current_dates=%s",
+                        picking.name,
+                        product.display_name,
+                        location_id,
+                        [
+                            self._effective_datetime_for_replay(m, current_product_moves)
+                            for m in current_product_moves
+                        ],
+                    )
+
+                    balance = 0.0
+                    for move in sorted_moves:
+                        qty = move.quantity or move.product_uom_qty
+                        if move.product_uom.factor:
+                            qty_in_product_uom = qty / move.product_uom.factor
+                        else:
+                            qty_in_product_uom = qty
+
+                        if move.location_dest_id.id == location_id:
+                            qty_in_product_uom = float("%.7f" % qty_in_product_uom)
+                            balance += qty_in_product_uom
+                            direction = "IN"
+                        elif move.location_id.id == location_id:
+                            qty_in_product_uom = float("%.6f" % qty_in_product_uom)
+                            balance -= qty_in_product_uom
+                            direction = "OUT"
+                        else:
+                            continue
+
+                        _logger.info(
+                            "[NEG_CHECK][MOVE] pick=%s ref=%s id=%s date=%s dir=%s qty=%s balance=%s",
+                            picking.name,
+                            move.reference or "-",
+                            move.id,
+                            self._effective_datetime_for_replay(move, current_product_moves),
+                            direction,
+                            qty_in_product_uom,
+                            balance,
                         )
 
-                if dst.id in relevant_location_ids and dst.usage not in excluded_usage:
-                    balances[dst.id] += qty
-                    if balances[dst.id] < balance_floor:
-                        raise UserError(
-                            self.env._(
-                                "موجودی منفی شناسایی شد:\n\n"
-                                "• کالا: %(product)s\n"
-                                "• انبار: %(location)s\n"
-                                "• تاریخ: %(date)s\n"
-                                "• مقدار حرکت: %(qty)s\n"
-                                "• موجودی جدید: %(balance)s",
-                                product=move.product_id.display_name,
-                                location=dst.complete_name,
-                                date=effective_by_picking.get(move.picking_id, move.date).date(),
-                                qty=qty,
-                                balance=balances[dst.id],
+                        if balance < self._BALANCE_FLOOR:
+                            location = self.env["stock.location"].browse(location_id)
+                            _logger.error(
+                                "[NEG_CHECK][NEGATIVE] pick=%s product=%s location=%s date=%s qty=%s balance=%s",
+                                picking.name,
+                                product.display_name,
+                                location.complete_name,
+                                self._effective_datetime_for_replay(move, current_product_moves).date(),
+                                qty_in_product_uom,
+                                balance,
                             )
-                        )
+                            raise UserError(
+                                self.env._(
+                                    "موجودی منفی شناسایی شد:\n\n"
+                                    "• کالا: %(product)s\n"
+                                    "• انبار: %(location)s\n"
+                                    "• تاریخ: %(date)s\n"
+                                    "• مقدار حرکت: %(qty)s\n"
+                                    "• موجودی جدید: %(balance)s",
+                                    product=product.display_name,
+                                    location=location.complete_name,
+                                    date=self._effective_datetime_for_replay(move, current_product_moves).date(),
+                                    qty=qty_in_product_uom,
+                                    balance=balance,
+                                )
+                            )
+
+                    _logger.info(
+                        "[NEG_CHECK][RESULT] picking=%s product=%s location_id=%s final_balance=%s",
+                        picking.name,
+                        product.display_name,
+                        location_id,
+                        balance,
+                    )
