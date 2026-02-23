@@ -19,20 +19,18 @@ class StockPicking(models.Model):
     )
 
     def _action_done(self):
-        """Preserve user-set done date across Odoo finalization."""
+        """Keep user-defined done date after Odoo finalization."""
         saved_dates = {picking.id: picking.date_done for picking in self}
         res = super()._action_done()
         for picking in self:
-            saved_date = saved_dates.get(picking.id)
-            if saved_date:
-                picking.date_done = saved_date
+            if saved_dates.get(picking.id):
+                picking.date_done = saved_dates[picking.id]
         return res
 
     def button_validate(self):
-        """Validate picking with pre-check and post-sync hooks."""
         _logger.info("========== CUSTOM VALIDATION START ==========")
 
-        # Optional fast debug helper (disabled by default).
+        # Debug helper when needed (disabled by default)
         if self.env.context.get("debug_show_done_date"):
             raise UserError(_("%s") % (self.date_done or "-"))
 
@@ -42,46 +40,53 @@ class StockPicking(models.Model):
 
         res = super().button_validate()
 
+        # Only sync records really finalized.
         for picking in self.filtered(lambda p: p.state == "done"):
             picking._update_effective_date()
 
         _logger.info("========== CUSTOM VALIDATION END ==========")
         return res
 
-    def _update_effective_date(self):
-        """Push selected effective date to done moves and move lines."""
+    def _get_effective_date(self):
         self.ensure_one()
-        effective_date = self.effective_date_time or self.date_done
+        if self.effective_date_time:
+            return self.effective_date_time
+        if "x_studio_effective_date_time" in self._fields and self.x_studio_effective_date_time:
+            return self.x_studio_effective_date_time
+        return self.date_done
+
+    def _update_effective_date(self):
+        """Update done dates/locations on related done moves and move lines."""
+        self.ensure_one()
+        effective_date = self._get_effective_date()
         if not effective_date:
             return
 
         done_moves = self.move_ids.filtered(lambda m: m.state == "done")
-        done_moves.write(
-            {
-                "date": effective_date,
-                "location_id": self.location_id.id,
-                "location_dest_id": self.location_dest_id.id,
-            }
-        )
+        vals = {
+            "date": effective_date,
+            "location_id": self.location_id.id,
+            "location_dest_id": self.location_dest_id.id,
+        }
+        done_moves.write(vals)
+        done_moves.mapped("move_line_ids").write(vals)
+        self.date_done = effective_date
 
-        done_moves.mapped("move_line_ids").write(
-            {
-                "date": effective_date,
-                "location_id": self.location_id.id,
-                "location_dest_id": self.location_dest_id.id,
-            }
-        )
-
-        self.write({"date_done": effective_date})
+    def _sort_key_for_location(self, move, location_id):
+        date_part = (move.date or move.create_date).date()
+        priority = 1 if move.location_dest_id.id == location_id else 2
+        return (date_part, priority, move.id)
 
     def _check_negative_stock_balance(self):
-        """Historical negative-stock check before validation."""
+        """Historical cumulative balance check before validate."""
         self.ensure_one()
 
         excluded_location_ids = {14, 15, 96}
         usage_exclusions = {"supplier", "view", "customer", "production"}
-        current_moves = self.move_ids.filtered(lambda m: m.state != "cancel" and m.product_id.is_storable)
 
+        current_moves = self.move_ids.filtered(
+            lambda m: m.state != "cancel" and m.product_id.is_storable
+        )
         products = current_moves.mapped("product_id")
         locations = set()
 
@@ -103,35 +108,41 @@ class StockPicking(models.Model):
                 continue
 
             for location_id in locations:
-                _logger.info("[PROCESS] Product: %s | Location ID: %s", product.display_name, location_id)
-
-                past_moves = self.env["stock.move"].search(
-                    [
-                        ("state", "=", "done"),
-                        ("product_id", "=", product.id),
-                        "|",
-                        ("location_id", "=", location_id),
-                        ("location_dest_id", "=", location_id),
-                    ],
-                    order="date asc, id asc",
+                _logger.info(
+                    "[PROCESS] Product: %s | Location ID: %s",
+                    product.display_name,
+                    location_id,
                 )
 
+                domain = [
+                    ("state", "=", "done"),
+                    ("product_id", "=", product.id),
+                    "|",
+                    ("location_id", "=", location_id),
+                    ("location_dest_id", "=", location_id),
+                ]
+                past_moves = self.env["stock.move"].search(domain)
+
                 relevant_current = current_moves.filtered(lambda m: m.product_id == product)
-                all_moves = past_moves | relevant_current
+                all_moves = (past_moves | relevant_current).sorted(
+                    key=lambda m: self._sort_key_for_location(m, location_id)
+                )
 
                 balance = 0.0
-                for move in all_moves.sorted(lambda m: m.date or m.create_date):
-                    qty = move.product_uom._compute_quantity(
-                        move.quantity or move.product_uom_qty,
-                        move.product_id.uom_id,
-                        rounding_method="HALF-UP",
-                    )
+                for move in all_moves:
+                    qty = move.quantity
+                    if move.product_uom.factor:
+                        qty_in_product_uom = qty / move.product_uom.factor
+                    else:
+                        qty_in_product_uom = qty
 
                     if move.location_dest_id.id == location_id:
-                        balance += qty
+                        qty_in_product_uom = float("%.7f" % qty_in_product_uom)
+                        balance += qty_in_product_uom
                         direction = "IN"
                     elif move.location_id.id == location_id:
-                        balance -= qty
+                        qty_in_product_uom = float("%.6f" % qty_in_product_uom)
+                        balance -= qty_in_product_uom
                         direction = "OUT"
                     else:
                         continue
@@ -140,7 +151,7 @@ class StockPicking(models.Model):
                         "[MOVE] %s | %s | Qty: %s | Balance: %s",
                         move.reference or move.id,
                         direction,
-                        qty,
+                        qty_in_product_uom,
                         balance,
                     )
 
@@ -155,9 +166,15 @@ class StockPicking(models.Model):
                         raise UserError(
                             _(
                                 "موجودی منفی شناسایی شد:\n\n"
-                                "کالا: %s\n"
-                                "انبار: %s\n"
-                                "موجودی: %s"
+                                "• کالا: %s\n"
+                                "• انبار: %s\n"
+                                "• تاریخ: %s\n"
+                                "• موجودی جدید: %s"
                             )
-                            % (product.display_name, location.complete_name, balance)
+                            % (
+                                product.display_name,
+                                location.complete_name,
+                                (move.date or move.create_date).date(),
+                                balance,
+                            )
                         )
