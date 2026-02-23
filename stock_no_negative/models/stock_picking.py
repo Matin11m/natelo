@@ -35,7 +35,7 @@ class StockPicking(models.Model):
             raise UserError(_("%s") % (self.date_done or "-"))
 
         for picking in self:
-            _logger.info("[PICKING] %s", picking.name)
+            _logger.info("[PICKING] name=%s id=%s state=%s", picking.name, picking.id, picking.state)
             picking._check_negative_stock_balance()
 
         res = super().button_validate()
@@ -60,6 +60,7 @@ class StockPicking(models.Model):
         self.ensure_one()
         effective_date = self._get_effective_date()
         if not effective_date:
+            _logger.info("[DATE_SYNC][SKIP] picking=%s no effective date", self.name)
             return
 
         done_moves = self.move_ids.filtered(lambda m: m.state == "done")
@@ -71,9 +72,31 @@ class StockPicking(models.Model):
         done_moves.write(vals)
         done_moves.mapped("move_line_ids").write(vals)
         self.date_done = effective_date
+        _logger.info(
+            "[DATE_SYNC][DONE] picking=%s date=%s done_moves=%s done_lines=%s",
+            self.name,
+            effective_date,
+            len(done_moves),
+            len(done_moves.mapped("move_line_ids")),
+        )
+
+    def _move_effective_datetime_for_check(self, move):
+        """Best-effort effective datetime used by historical replay logs/check."""
+        if move.picking_id == self:
+            return self._get_effective_date() or move.date or move.create_date
+        if move.picking_id and getattr(move.picking_id, "effective_date_time", False):
+            return move.picking_id.effective_date_time
+        if (
+            move.picking_id
+            and "x_studio_effective_date_time" in move.picking_id._fields
+            and move.picking_id.x_studio_effective_date_time
+        ):
+            return move.picking_id.x_studio_effective_date_time
+        return move.date or move.create_date
 
     def _sort_key_for_location(self, move, location_id):
-        date_part = (move.date or move.create_date).date()
+        effective_dt = self._move_effective_datetime_for_check(move)
+        date_part = effective_dt.date()
         priority = 1 if move.location_dest_id.id == location_id else 2
         return (date_part, priority, move.id)
 
@@ -100,16 +123,25 @@ class StockPicking(models.Model):
                 ):
                     locations.add(loc.id)
 
-        _logger.info("[CHECK] Products: %s", [p.display_name for p in products])
-        _logger.info("[CHECK] Locations: %s", list(locations))
+        _logger.info(
+            "[CHECK][START] picking=%s id=%s type=%s effective_date=%s products=%s locations=%s",
+            self.name,
+            self.id,
+            self.picking_type_id.code,
+            self._get_effective_date(),
+            [p.display_name for p in products],
+            sorted(locations),
+        )
 
         for product in products:
             if product.allow_negative_stock or product.categ_id.allow_negative_stock:
+                _logger.info("[CHECK][SKIP] product=%s allow_negative enabled", product.display_name)
                 continue
 
             for location_id in locations:
                 _logger.info(
-                    "[PROCESS] Product: %s | Location ID: %s",
+                    "[CHECK][PRODUCT] picking=%s product=%s location_id=%s",
+                    self.name,
                     product.display_name,
                     location_id,
                 )
@@ -128,9 +160,19 @@ class StockPicking(models.Model):
                     key=lambda m: self._sort_key_for_location(m, location_id)
                 )
 
+                _logger.info(
+                    "[CHECK][SCOPE] picking=%s product=%s location_id=%s past=%s current=%s total=%s",
+                    self.name,
+                    product.display_name,
+                    location_id,
+                    len(past_moves),
+                    len(relevant_current),
+                    len(all_moves),
+                )
+
                 balance = 0.0
                 for move in all_moves:
-                    qty = move.quantity
+                    qty = move.quantity or move.product_uom_qty
                     if move.product_uom.factor:
                         qty_in_product_uom = qty / move.product_uom.factor
                     else:
@@ -147,9 +189,15 @@ class StockPicking(models.Model):
                     else:
                         continue
 
+                    effective_dt = self._move_effective_datetime_for_check(move)
                     _logger.info(
-                        "[MOVE] %s | %s | Qty: %s | Balance: %s",
-                        move.reference or move.id,
+                        "[CHECK][MOVE] picking=%s ref=%s move_id=%s date=%s src=%s dst=%s dir=%s qty=%s balance=%s",
+                        self.name,
+                        move.reference or "-",
+                        move.id,
+                        effective_dt,
+                        move.location_id.complete_name,
+                        move.location_dest_id.complete_name,
                         direction,
                         qty_in_product_uom,
                         balance,
@@ -158,9 +206,11 @@ class StockPicking(models.Model):
                     if balance < -0.0000001:
                         location = self.env["stock.location"].browse(location_id)
                         _logger.error(
-                            "NEGATIVE DETECTED -> %s | %s | Balance: %s",
+                            "[CHECK][NEGATIVE] picking=%s product=%s location=%s date=%s balance=%s",
+                            self.name,
                             product.display_name,
                             location.complete_name,
+                            effective_dt,
                             balance,
                         )
                         raise UserError(
@@ -174,7 +224,15 @@ class StockPicking(models.Model):
                             % (
                                 product.display_name,
                                 location.complete_name,
-                                (move.date or move.create_date).date(),
+                                effective_dt.date(),
                                 balance,
                             )
                         )
+
+                _logger.info(
+                    "[CHECK][RESULT] picking=%s product=%s location_id=%s final_balance=%s",
+                    self.name,
+                    product.display_name,
+                    location_id,
+                    balance,
+                )
